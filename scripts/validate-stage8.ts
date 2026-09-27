@@ -731,6 +731,11 @@ async function runStage8Validation() {
   )).rows[0];
   assert(incidentInDb.status === 'INVESTIGATING', 'Durable INVESTIGATING Status', 'Durable status in DB is INVESTIGATING.');
 
+  // Record budget before attempting authorization
+  const budgetBeforeAttempt = (await db.query<{ reserved_amount: string }>(
+    `SELECT reserved_amount FROM principal_budgets WHERE principal_id = 'agent-st8-1' AND currency_or_unit = 'USD';`
+  )).rows[0];
+
   // E & F: Attempt new authorization for the same effect and confirm it is rejected
   let authBlockedDuringInvestigation = false;
   try {
@@ -761,11 +766,40 @@ async function runStage8Validation() {
     `SELECT intent_id FROM intents WHERE idempotency_key = 'idem-test27-investigating-blocked';`
   );
   assert(leakedIntents.rows.length === 0, 'No Intent Leaked', 'Zero intents created for rejected authorization.');
+
+  const leakedAuths = await db.query(
+    `SELECT authorization_id FROM authorizations WHERE intent_id IN (
+       SELECT intent_id FROM intents WHERE idempotency_key = 'idem-test27-investigating-blocked'
+     );`
+  );
+  assert(leakedAuths.rows.length === 0, 'No Authorization Leaked', 'Zero authorizations created for rejected authorization.');
+
+  const totalAuthsForEffect = (await db.query<{ count: string }>(
+    `SELECT COUNT(*) as count FROM authorizations WHERE effect_key = $1;`,
+    [setup27.auth.effect_key]
+  )).rows[0].count;
+  assert(Number(totalAuthsForEffect) === 1, 'Total Authorizations Unchanged', 'Authorizations count unchanged (exactly 1).');
+
   const totalAttemptsForEffect = (await db.query<{ count: string }>(
     `SELECT COUNT(*) as count FROM attempts WHERE effect_key = $1;`,
     [setup27.auth.effect_key]
   )).rows[0].count;
   assert(Number(totalAttemptsForEffect) === 1, 'No Attempt Leaked', 'Attempts count unchanged (exactly 1).');
+
+  const totalBudgetReservations = (await db.query<{ count: string }>(
+    `SELECT COUNT(*) as count FROM budget_reservations WHERE effect_key = $1;`,
+    [setup27.auth.effect_key]
+  )).rows[0].count;
+  assert(Number(totalBudgetReservations) === 1, 'No Budget Reservation Leaked', 'Budget reservations count unchanged (exactly 1).');
+
+  const budgetAfterAttempt = (await db.query<{ reserved_amount: string }>(
+    `SELECT reserved_amount FROM principal_budgets WHERE principal_id = 'agent-st8-1' AND currency_or_unit = 'USD';`
+  )).rows[0];
+  assert(
+    Number(budgetAfterAttempt.reserved_amount) === Number(budgetBeforeAttempt.reserved_amount),
+    'Budget Balance Intact',
+    'Reserved budget amount unchanged after rejected authorization.'
+  );
 
   // Also confirm ledger gating helper reports permitted=false
   const gatingInvestigating = await evaluateAuthorizationGating(db, setup27.auth.effect_key, 'UNSAFE_REPEAT');
