@@ -291,6 +291,29 @@ export interface EvidenceRecord {
 export type IncidentSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 export type IncidentStatus = 'OPEN' | 'INVESTIGATING' | 'ACKNOWLEDGED' | 'RESOLVED' | 'ADJUDICATED';
 
+/**
+ * Authoritative set of contradiction incident statuses that represent an active,
+ * unresolved safety-relevant contradiction.
+ * While an incident is in any of these states, it must block:
+ * 1. Authorization of new operations on the affected effect (fail closed).
+ * 2. Terminal closure of the affected effect in canonical derivation.
+ * 3. Ledger repeat gating.
+ */
+export const UNRESOLVED_INCIDENT_STATUSES: readonly IncidentStatus[] = [
+  'OPEN',
+  'INVESTIGATING',
+  'ACKNOWLEDGED',
+] as const;
+
+export const RESOLVED_INCIDENT_STATUSES: readonly IncidentStatus[] = [
+  'RESOLVED',
+  'ADJUDICATED',
+] as const;
+
+export function isUnresolvedContradictionStatus(status: string): boolean {
+  return (UNRESOLVED_INCIDENT_STATUSES as readonly string[]).includes(status);
+}
+
 export interface ContradictionIncident {
   incident_id: string;
   effect_key: string;

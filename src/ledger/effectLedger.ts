@@ -11,7 +11,7 @@
  */
 
 import { PGlite } from '@electric-sql/pglite';
-import { Attempt, Effect, EvidenceRecord, RepeatMode } from '../schema/types.ts';
+import { Attempt, Effect, EvidenceRecord, RepeatMode, UNRESOLVED_INCIDENT_STATUSES } from '../schema/types.ts';
 
 export interface EffectSummary {
   effect: Effect | null;
@@ -111,16 +111,16 @@ export async function evaluateAuthorizationGating(
   const nextCycle = effect.current_cycle + 1;
 
   // --------------------------------------------------------------------------
-  // STAGE 8 CONTRADICTION GATING: OPEN CONTRADICTION BLOCKS REPEAT AUTHORIZATION
+  // STAGE 8 CONTRADICTION GATING: UNRESOLVED CONTRADICTION BLOCKS REPEAT AUTHORIZATION
   // --------------------------------------------------------------------------
-  const openIncidents = await db.query<{ incident_id: string }>(
-    `SELECT incident_id FROM contradiction_incidents WHERE effect_key = $1 AND status = 'OPEN';`,
-    [effectKey]
+  const openIncidents = await db.query<{ incident_id: string; status: string }>(
+    `SELECT incident_id, status FROM contradiction_incidents WHERE effect_key = $1 AND status = ANY($2::varchar[]);`,
+    [effectKey, UNRESOLVED_INCIDENT_STATUSES]
   );
   if (openIncidents.rows.length > 0) {
     return {
       permitted: false,
-      reason: `Effect '${effectKey}' is blocked by open contradiction incident '${openIncidents.rows[0].incident_id}'. Adjudication required before authorization.`,
+      reason: `Effect '${effectKey}' is blocked by unresolved contradiction incident '${openIncidents.rows[0].incident_id}' (status: ${openIncidents.rows[0].status}). Adjudication required before authorization.`,
       nextCycle,
       repeatAuthorizationType: repeatMode === 'SAFE_REPEAT' ? 'SAFE_REPEAT_ALLOWED' : 'UNSAFE_REPEAT_PERMITTED_TERMINAL_VERIFIED',
     };

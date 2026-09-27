@@ -32,6 +32,7 @@ import {
   EffectExecutionState,
   EvidenceRecord,
   EvidenceType,
+  UNRESOLVED_INCIDENT_STATUSES,
 } from '../schema/types.ts';
 import { CapabilityContractDefinition } from '../contracts/types.ts';
 import { mockSendMessageContract, mockSendMessageUnsafeContract } from '../contracts/mockSendMessageContract.ts';
@@ -528,11 +529,11 @@ export async function deriveCanonicalState(
 
     const evidenceList = evidenceRes.rows;
 
-    // Check open contradiction incidents for this effect
+    // Check unresolved contradiction incidents for this effect (OPEN, INVESTIGATING, etc.)
     const openIncidentsRes = await tx.query<{ incident_id: string }>(
       `SELECT incident_id FROM contradiction_incidents
-       WHERE effect_key = $1 AND status = 'OPEN';`,
-      [resolvedEffectKey]
+       WHERE effect_key = $1 AND status = ANY($2::varchar[]);`,
+      [resolvedEffectKey, UNRESOLVED_INCIDENT_STATUSES]
     );
 
     let openContradictionCount = openIncidentsRes.rows.length;

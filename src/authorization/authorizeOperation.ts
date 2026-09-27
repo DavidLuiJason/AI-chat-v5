@@ -18,7 +18,7 @@ import {
   AuthorizeOperationRequest,
   AuthorizeOperationResult,
 } from './types.ts';
-import { RepeatAuthorizationType } from '../schema/types.ts';
+import { RepeatAuthorizationType, UNRESOLVED_INCIDENT_STATUSES } from '../schema/types.ts';
 
 export async function authorizeOperation(
   db: PGlite,
@@ -332,25 +332,27 @@ export async function authorizeOperation(
       }
 
       // ----------------------------------------------------------------------
-      // STAGE 8 CONTRADICTION GATING: OPEN CONTRADICTION BLOCKS AUTHORIZATION
-      // Fail closed: An open safety-relevant contradiction atomically blocks new authorization.
+      // STAGE 8 CONTRADICTION GATING: UNRESOLVED CONTRADICTION BLOCKS AUTHORIZATION
+      // Fail closed: Any unresolved safety-relevant contradiction (OPEN, INVESTIGATING, etc.)
+      // atomically blocks new authorization until legitimately resolved.
       // ----------------------------------------------------------------------
       const openIncidentRes = await tx.query<{
         incident_id: string;
+        status: string;
         severity: string;
         summary: string;
       }>(
-        `SELECT incident_id, severity, summary FROM contradiction_incidents
-         WHERE effect_key = $1 AND status = 'OPEN'
+        `SELECT incident_id, status, severity, summary FROM contradiction_incidents
+         WHERE effect_key = $1 AND status = ANY($2::varchar[])
          FOR SHARE;`,
-        [effectKey]
+        [effectKey, UNRESOLVED_INCIDENT_STATUSES]
       );
 
       if (openIncidentRes.rows.length > 0) {
         const inc = openIncidentRes.rows[0];
         throw new AuthorizationError(
           'BLOCKED_BY_OPEN_CONTRADICTION',
-          `Cannot authorize operation for effect '${effectKey}': open safety-relevant contradiction incident '${inc.incident_id}' exists and must be adjudicated first.`
+          `Cannot authorize operation for effect '${effectKey}': unresolved safety-relevant contradiction incident '${inc.incident_id}' (status: ${inc.status}) exists and must be adjudicated first.`
         );
       }
 

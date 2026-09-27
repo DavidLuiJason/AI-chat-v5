@@ -2,7 +2,7 @@
  * @file scripts/validate-stage8.ts
  * Stage 8 Validation Suite: Adjudication & Contradiction Blocking.
  *
- * Verifies all 26 required Stage 8 invariants:
+ * Verifies all 27 required Stage 8 invariants:
  *  1. Contradiction incident creation.
  *  2. Durable OPEN contradiction.
  *  3. Immutable evidence (cannot be edited or deleted).
@@ -28,7 +28,8 @@
  * 23. Authorization / adjudication race is safe and deterministic.
  * 24. Recovery cannot adjudicate.
  * 25. Reconciliation cannot adjudicate.
- * 26. Stage 1–7 regression suites remain fully passing.
+ * 26. Spurious contradiction dismissal to ADJUDICATED.
+ * 27. REMAIN_BLOCKED_REQUIRE_EVIDENCE (INVESTIGATING) continues to block authorization & terminal closure.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -465,7 +466,7 @@ async function runStage8Validation() {
   console.log('\n[13/26] Testing: UNSAFE_REPEAT remains blocked while contradiction is OPEN...');
   const gatingUnsafe = await evaluateAuthorizationGating(db, setup10.auth.effect_key, 'UNSAFE_REPEAT');
   assert(gatingUnsafe.permitted === false, 'Gating Blocked', 'Ledger gating returns permitted=false due to open contradiction.');
-  assert(gatingUnsafe.reason.includes('blocked by open contradiction'), 'Gating Reason Valid', `Reason: ${gatingUnsafe.reason}`);
+  assert(gatingUnsafe.reason.includes('contradiction incident'), 'Gating Reason Valid', `Reason: ${gatingUnsafe.reason}`);
 
   // --------------------------------------------------------------------------
   // TEST 14: SAFE_REPEAT preserves existing contract gating while considering contradiction
@@ -670,7 +671,7 @@ async function runStage8Validation() {
   // --------------------------------------------------------------------------
   // TEST 26: Dismissing Spurious Contradiction
   // --------------------------------------------------------------------------
-  console.log('\n[26/26] Testing: Dismissing spurious contradiction incident...');
+  console.log('\n[26/27] Testing: Dismissing spurious contradiction incident...');
   const setup26 = await setupEffectWithContradiction('test26');
   const dismissRes = await adjudicateContradiction(db, {
     incident_id: setup26.incident.incident_id,
@@ -681,8 +682,136 @@ async function runStage8Validation() {
   });
   assert(dismissRes.resulting_incident_status === 'ADJUDICATED', 'Dismissed Successfully', 'Spurious contradiction dismissed to ADJUDICATED.');
 
+  // --------------------------------------------------------------------------
+  // TEST 27: INVESTIGATING state continues to block authorization & terminal closure
+  // (OPEN -> REMAIN_BLOCKED_REQUIRE_EVIDENCE -> INVESTIGATING -> Still Blocked)
+  // --------------------------------------------------------------------------
+  console.log('\n[27/27] Testing: REMAIN_BLOCKED_REQUIRE_EVIDENCE (INVESTIGATING) continues to block authorization & terminal closure...');
+  const setup27 = await setupEffectWithContradiction('test27');
+
+  // A & B: Confirm it initially blocks authorization while in OPEN status
+  let authBlockedInitial = false;
+  try {
+    await authorizeOperation(db, {
+      actor_principal_id: 'agent-st8-1',
+      capability_id: 'mock.send_message',
+      capability_version: '1.0.0',
+      requested_scope: 'default',
+      policy_version_id: 'pol_stage8_v1',
+      idempotency_key: 'idem-test27-open-blocked',
+      budget_amount: 5.0,
+      budget_currency: 'USD',
+      operation_payload: setup27.operation_payload,
+    });
+  } catch (err: unknown) {
+    if (err instanceof AuthorizationError && err.code === 'BLOCKED_BY_OPEN_CONTRADICTION') {
+      authBlockedInitial = true;
+    }
+  }
+  assert(authBlockedInitial, 'Initial OPEN Block', 'New authorization blocked while incident is OPEN.');
+
+  // C: Adjudicate with REMAIN_BLOCKED_REQUIRE_EVIDENCE
+  const adjInvestigating = await adjudicateContradiction(db, {
+    incident_id: setup27.incident.incident_id,
+    adjudicator_principal_id: 'adj-officer-1',
+    decision: 'REMAIN_BLOCKED_REQUIRE_EVIDENCE',
+    rationale: 'Evidence required from secondary carrier telemetry before resolving.',
+    policy_version_id: 'pol_stage8_v1',
+  });
+
+  // D: Confirm durable incident status is INVESTIGATING
+  assert(
+    adjInvestigating.resulting_incident_status === 'INVESTIGATING',
+    'Incident Status INVESTIGATING',
+    'Incident status moved to INVESTIGATING.'
+  );
+  const incidentInDb = (await db.query<{ status: string; resolution_notes: string }>(
+    `SELECT status, resolution_notes FROM contradiction_incidents WHERE incident_id = $1;`,
+    [setup27.incident.incident_id]
+  )).rows[0];
+  assert(incidentInDb.status === 'INVESTIGATING', 'Durable INVESTIGATING Status', 'Durable status in DB is INVESTIGATING.');
+
+  // E & F: Attempt new authorization for the same effect and confirm it is rejected
+  let authBlockedDuringInvestigation = false;
+  try {
+    await authorizeOperation(db, {
+      actor_principal_id: 'agent-st8-1',
+      capability_id: 'mock.send_message',
+      capability_version: '1.0.0',
+      requested_scope: 'default',
+      policy_version_id: 'pol_stage8_v1',
+      idempotency_key: 'idem-test27-investigating-blocked',
+      budget_amount: 5.0,
+      budget_currency: 'USD',
+      operation_payload: setup27.operation_payload,
+    });
+  } catch (err: unknown) {
+    if (err instanceof AuthorizationError && err.code === 'BLOCKED_BY_OPEN_CONTRADICTION') {
+      authBlockedDuringInvestigation = true;
+    }
+  }
+  assert(
+    authBlockedDuringInvestigation,
+    'Authorization Blocked During Investigation',
+    'Authorization rejected with BLOCKED_BY_OPEN_CONTRADICTION while incident is INVESTIGATING.'
+  );
+
+  // G: Confirm no intent, authorization, attempt, or budget reservation leaked
+  const leakedIntents = await db.query(
+    `SELECT intent_id FROM intents WHERE idempotency_key = 'idem-test27-investigating-blocked';`
+  );
+  assert(leakedIntents.rows.length === 0, 'No Intent Leaked', 'Zero intents created for rejected authorization.');
+  const totalAttemptsForEffect = (await db.query<{ count: string }>(
+    `SELECT COUNT(*) as count FROM attempts WHERE effect_key = $1;`,
+    [setup27.auth.effect_key]
+  )).rows[0].count;
+  assert(Number(totalAttemptsForEffect) === 1, 'No Attempt Leaked', 'Attempts count unchanged (exactly 1).');
+
+  // Also confirm ledger gating helper reports permitted=false
+  const gatingInvestigating = await evaluateAuthorizationGating(db, setup27.auth.effect_key, 'UNSAFE_REPEAT');
+  assert(gatingInvestigating.permitted === false, 'Ledger Gating Blocked', 'evaluateAuthorizationGating blocked during INVESTIGATING.');
+
+  // H & I: Run canonical derivation and confirm effect remains non-terminal and contradiction-blocked
+  const derivInvestigating = await deriveCanonicalState(db, { effect_key: setup27.auth.effect_key });
+  assert(
+    derivInvestigating.effect.canonical_execution_state === 'CONTRADICTED_INCIDENT',
+    'State CONTRADICTED_INCIDENT',
+    `Effect canonical_execution_state is CONTRADICTED_INCIDENT (found: ${derivInvestigating.effect.canonical_execution_state}).`
+  );
+  assert(
+    derivInvestigating.effect.is_terminally_closed === false,
+    'Terminal Closure Blocked',
+    'is_terminally_closed is strictly false while under investigation.'
+  );
+  assert(
+    derivInvestigating.effect.open_contradiction_count > 0,
+    'Contradiction Count Positive',
+    `open_contradiction_count is ${derivInvestigating.effect.open_contradiction_count} (> 0).`
+  );
+
+  // J: Confirm the contradiction remains durably auditable
+  const adjRecords = await db.query<{ adjudication_id: string; decision: string }>(
+    `SELECT adjudication_id, decision FROM adjudication_records WHERE incident_id = $1;`,
+    [setup27.incident.incident_id]
+  );
+  assert(adjRecords.rows.length === 1, 'Adjudication Record Preserved', 'Adjudication record persisted in audit trail.');
+  assert(adjRecords.rows[0].decision === 'REMAIN_BLOCKED_REQUIRE_EVIDENCE', 'Decision Recorded', 'Decision correctly recorded as REMAIN_BLOCKED_REQUIRE_EVIDENCE.');
+
+  // Subsequent resolution: Adjudicate with RESOLVE_FAVOR_EXECUTION to verify legitimate unblocking
+  const subsequentAdj = await adjudicateContradiction(db, {
+    incident_id: setup27.incident.incident_id,
+    adjudicator_principal_id: 'adj-officer-1',
+    decision: 'RESOLVE_FAVOR_EXECUTION',
+    rationale: 'Secondary carrier telemetry confirms successful execution.',
+    policy_version_id: 'pol_stage8_v1',
+  });
+  assert(subsequentAdj.resulting_incident_status === 'ADJUDICATED', 'Subsequent Resolution Succeeded', 'Incident successfully resolved to ADJUDICATED.');
+  const postResolutionDeriv = await deriveCanonicalState(db, { effect_key: setup27.auth.effect_key });
+  assert(postResolutionDeriv.effect.canonical_execution_state === 'EXECUTED', 'State Transitioned to EXECUTED', 'Effect state promoted to EXECUTED.');
+  assert(postResolutionDeriv.effect.is_terminally_closed === true, 'Terminal Closure Achieved', 'Terminal closure achieved after legitimate resolution.');
+
   console.log('\n===============================================================');
-  console.log('STAGE 8 VALIDATION COMPLETED: 26/26 TESTS PASSED.');
+  console.log('STAGE 8 VALIDATION COMPLETED: 27/27 TESTS PASSED.');
   console.log('===============================================================');
 }
 
