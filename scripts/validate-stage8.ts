@@ -627,12 +627,42 @@ async function runStage8Validation() {
   }).catch((err) => err);
 
   const [resAuth, resAdj] = await Promise.all([authRace, adjRace]);
-  // Either authorization hit open contradiction and threw BLOCKED_BY_OPEN_CONTRADICTION,
-  // or adjudication committed first and authorization succeeded; both outcomes are safe and valid.
+
+  // TEST G verification: Adjudication transaction must succeed without deadlock (SQLSTATE 40P01)
+  assert(
+    resAdj && resAdj.resulting_incident_status === 'ADJUDICATED',
+    'Adjudication Succeeded In Race',
+    'Adjudication completed successfully without deadlock.'
+  );
+
+  // Authorization must either be safely blocked by unresolved contradiction or safely authorized
   const authSafelyHandled =
     (resAuth instanceof AuthorizationError && resAuth.code === 'BLOCKED_BY_OPEN_CONTRADICTION') ||
     resAuth.authorized === true;
   assert(authSafelyHandled, 'Race Handled Safely', 'Authorization / Adjudication race maintained consistency.');
+
+  // If authorization was blocked, verify zero leaked artifacts
+  if (resAuth instanceof AuthorizationError) {
+    const leakedIntents = await db.query(
+      `SELECT intent_id FROM intents WHERE idempotency_key = 'idem-race-test23';`
+    );
+    assert(leakedIntents.rows.length === 0, 'No Intent Leaked In Race', 'Blocked race authorization created 0 intents.');
+  }
+
+  // Verify the database state is valid and consistent post-race
+  const finalIncidentInDb = (await db.query<{ status: string }>(
+    `SELECT status FROM contradiction_incidents WHERE incident_id = $1;`,
+    [setup23.incident.incident_id]
+  )).rows[0];
+  assert(finalIncidentInDb.status === 'ADJUDICATED', 'Incident Durably Adjudicated', 'Incident durably recorded as ADJUDICATED.');
+
+  // Verify canonical derivation executes cleanly on the post-race state
+  const postRaceDeriv = await deriveCanonicalState(db, { effect_key: setup23.auth.effect_key });
+  assert(
+    postRaceDeriv.effect.canonical_execution_state === 'EXECUTED',
+    'Post-Race Canonical Derivation Valid',
+    'Effect canonical state safely derived after concurrent operations.'
+  );
 
   // --------------------------------------------------------------------------
   // TEST 24: Recovery cannot adjudicate
@@ -659,14 +689,48 @@ async function runStage8Validation() {
   const adjCountAfterRec = Number((await db.query<{ count: string }>(`SELECT COUNT(*) as count FROM adjudication_records;`)).rows[0].count);
   assert(adjCountBeforeRec === adjCountAfterRec, 'Recovery Did Not Adjudicate', 'Recovery made zero changes to adjudication records.');
 
+  // TEST H: Verify recovery did not clear or bypass the contradiction on setup24
+  const incidentAfterRec = (await db.query<{ status: string }>(
+    `SELECT status FROM contradiction_incidents WHERE incident_id = $1;`,
+    [setup24.incident.incident_id]
+  )).rows[0];
+  assert(incidentAfterRec.status === 'OPEN', 'Contradiction Still OPEN After Recovery', 'Recovery did not alter contradiction incident status.');
+
+  let authBlockedAfterRec = false;
+  try {
+    await authorizeOperation(db, {
+      actor_principal_id: 'agent-st8-1',
+      capability_id: 'mock.send_message',
+      capability_version: '1.0.0',
+      requested_scope: 'default',
+      policy_version_id: 'pol_stage8_v1',
+      idempotency_key: 'idem-rec-test24-blocked',
+      budget_amount: 5.0,
+      budget_currency: 'USD',
+      operation_payload: setup24.operation_payload,
+    });
+  } catch (err: unknown) {
+    if (err instanceof AuthorizationError && err.code === 'BLOCKED_BY_OPEN_CONTRADICTION') {
+      authBlockedAfterRec = true;
+    }
+  }
+  assert(authBlockedAfterRec, 'Recovery Cannot Bypass Contradiction Block', 'Recovery cannot unblock or bypass contradiction blocking.');
+
   // --------------------------------------------------------------------------
-  // TEST 25: Reconciliation cannot adjudicate
+  // TEST 25: Reconciliation cannot adjudicate or bypass contradiction
   // --------------------------------------------------------------------------
   console.log('\n[25/26] Testing: Reconciliation cannot adjudicate...');
   const adjCountBeforeRecon = Number((await db.query<{ count: string }>(`SELECT COUNT(*) as count FROM adjudication_records;`)).rows[0].count);
   await reconcileUnresolvedAttempts(db, { limit: 10, min_unresolved_seconds: 0, worker_identity: 'worker-rec-8' });
   const adjCountAfterRecon = Number((await db.query<{ count: string }>(`SELECT COUNT(*) as count FROM adjudication_records;`)).rows[0].count);
   assert(adjCountBeforeRecon === adjCountAfterRecon, 'Reconciliation Did Not Adjudicate', 'Reconciliation made zero changes to adjudication records.');
+
+  // TEST I: Verify reconciliation did not alter contradiction incident status
+  const incidentAfterRecon = (await db.query<{ status: string }>(
+    `SELECT status FROM contradiction_incidents WHERE incident_id = $1;`,
+    [setup24.incident.incident_id]
+  )).rows[0];
+  assert(incidentAfterRecon.status === 'OPEN', 'Contradiction Still OPEN After Reconciliation', 'Reconciliation did not alter contradiction incident status.');
 
   // --------------------------------------------------------------------------
   // TEST 26: Dismissing Spurious Contradiction

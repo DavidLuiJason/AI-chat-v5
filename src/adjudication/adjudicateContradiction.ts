@@ -136,7 +136,64 @@ export async function adjudicateContradiction(
     }
 
     // ------------------------------------------------------------------------
-    // 3. ROW LOCK ON CONTRADICTION INCIDENT (FOR UPDATE)
+    // 3. LOOKUP INCIDENT EFFECT KEY (Pre-lock lookup)
+    // ------------------------------------------------------------------------
+    const incidentLookup = await tx.query<{ effect_key: string }>(
+      `SELECT effect_key FROM contradiction_incidents WHERE incident_id = $1;`,
+      [request.incident_id]
+    );
+
+    if (incidentLookup.rows.length === 0) {
+      throw new AdjudicationError(
+        'INCIDENT_NOT_FOUND',
+        `Contradiction incident '${request.incident_id}' not found.`
+      );
+    }
+
+    const effectKey = incidentLookup.rows[0].effect_key;
+
+    // ------------------------------------------------------------------------
+    // 4. ROW LOCK ON EFFECT (FOR UPDATE)
+    // Strict Global Lock Order: effects -> contradiction_incidents
+    // Both authorizeOperation and adjudicateContradiction lock effects first,
+    // eliminating AB-BA lock inversion and preventing PostgreSQL deadlocks.
+    // ------------------------------------------------------------------------
+    const effectRes = await tx.query<{
+      effect_key: string;
+      executed_fact: boolean;
+      execution_state: string;
+      fence_version: string | number;
+    }>(
+      `SELECT effect_key, executed_fact, execution_state, fence_version
+       FROM effects
+       WHERE effect_key = $1
+       FOR UPDATE;`,
+      [effectKey]
+    );
+
+    if (effectRes.rows.length === 0) {
+      throw new AdjudicationError(
+        'INCIDENT_NOT_FOUND',
+        `Associated effect '${effectKey}' not found.`
+      );
+    }
+
+    const effect = effectRes.rows[0];
+    const currentEffectFence = Number(effect.fence_version);
+
+    if (
+      request.expected_effect_fence_version !== undefined &&
+      request.expected_effect_fence_version !== currentEffectFence
+    ) {
+      throw new AdjudicationError(
+        'STALE_FENCE_VERSION',
+        `Stale effect fence version: expected ${request.expected_effect_fence_version}, found ${currentEffectFence}.`
+      );
+    }
+
+    // ------------------------------------------------------------------------
+    // 5. ROW LOCK ON CONTRADICTION INCIDENT (FOR UPDATE)
+    // Strict Global Lock Order: effects -> contradiction_incidents
     // ------------------------------------------------------------------------
     const incidentRes = await tx.query<{
       incident_id: string;
@@ -156,13 +213,6 @@ export async function adjudicateContradiction(
       [request.incident_id]
     );
 
-    if (incidentRes.rows.length === 0) {
-      throw new AdjudicationError(
-        'INCIDENT_NOT_FOUND',
-        `Contradiction incident '${request.incident_id}' not found.`
-      );
-    }
-
     const incident = incidentRes.rows[0];
     const currentIncidentFence = Number(incident.fence_version ?? 1);
 
@@ -180,42 +230,6 @@ export async function adjudicateContradiction(
       throw new AdjudicationError(
         'STALE_FENCE_VERSION',
         `Stale incident fence version: expected ${request.expected_fence_version}, found ${currentIncidentFence}.`
-      );
-    }
-
-    // ------------------------------------------------------------------------
-    // 4. ROW LOCK ON EFFECT (FOR UPDATE)
-    // ------------------------------------------------------------------------
-    const effectRes = await tx.query<{
-      effect_key: string;
-      executed_fact: boolean;
-      execution_state: string;
-      fence_version: string | number;
-    }>(
-      `SELECT effect_key, executed_fact, execution_state, fence_version
-       FROM effects
-       WHERE effect_key = $1
-       FOR UPDATE;`,
-      [incident.effect_key]
-    );
-
-    if (effectRes.rows.length === 0) {
-      throw new AdjudicationError(
-        'INCIDENT_NOT_FOUND',
-        `Associated effect '${incident.effect_key}' not found.`
-      );
-    }
-
-    const effect = effectRes.rows[0];
-    const currentEffectFence = Number(effect.fence_version);
-
-    if (
-      request.expected_effect_fence_version !== undefined &&
-      request.expected_effect_fence_version !== currentEffectFence
-    ) {
-      throw new AdjudicationError(
-        'STALE_FENCE_VERSION',
-        `Stale effect fence version: expected ${request.expected_effect_fence_version}, found ${currentEffectFence}.`
       );
     }
 
