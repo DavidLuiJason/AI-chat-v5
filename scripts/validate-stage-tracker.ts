@@ -37,33 +37,31 @@ async function runStageTrackerValidation() {
   // --------------------------------------------------------------------------
   // TEST 1: Fresh Storage Initialization
   // --------------------------------------------------------------------------
-  console.log('\n[1/8] Testing: Fresh storage initialization sets Stage 1–8 COMPLETE and 9–10 NOT_STARTED...');
+  console.log('\n[1/8] Testing: Fresh storage initialization sets Stage 1–9 COMPLETE and 10 NOT_STARTED...');
   const records = initializeStageTracker(true);
 
   assert(records.length === 10, 'Total Stages Count', `Expected 10 stages, found ${records.length}.`);
 
-  for (let i = 1; i <= 8; i++) {
+  for (let i = 1; i <= 9; i++) {
     const stage = records.find((s) => s.stage_number === i);
     assert(stage !== undefined, `Stage ${i} Exists`, `Found Stage ${i}.`);
     assert(stage?.status === 'COMPLETE', `Stage ${i} Status COMPLETE`, `Stage ${i} is COMPLETE.`);
     assert(stage?.completed_at !== null, `Stage ${i} Timestamp`, `Stage ${i} has completion timestamp: ${stage?.completed_at}.`);
   }
 
-  for (let i = 9; i <= 10; i++) {
-    const stage = records.find((s) => s.stage_number === i);
-    assert(stage !== undefined, `Stage ${i} Exists`, `Found Stage ${i}.`);
-    assert(stage?.status === 'NOT_STARTED', `Stage ${i} Status NOT_STARTED`, `Stage ${i} is NOT_STARTED.`);
-    assert(stage?.completed_at === null, `Stage ${i} Timestamp Null`, `Stage ${i} completion timestamp is NULL.`);
-  }
+  const stage10 = records.find((s) => s.stage_number === 10);
+  assert(stage10 !== undefined, 'Stage 10 Exists', 'Found Stage 10.');
+  assert(stage10?.status === 'NOT_STARTED', 'Stage 10 Status NOT_STARTED', 'Stage 10 is NOT_STARTED.');
+  assert(stage10?.completed_at === null, 'Stage 10 Timestamp Null', 'Stage 10 completion timestamp is NULL.');
 
   // --------------------------------------------------------------------------
   // TEST 2: Current Progress & Next Stage Identification
   // --------------------------------------------------------------------------
-  console.log('\n[2/8] Testing: Current progress is Stage 8 and Next is Stage 9...');
+  console.log('\n[2/8] Testing: Current progress is Stage 9 and Next is Stage 10...');
   const summary = getStageTrackerSummary();
-  assert(summary.currentProgressStage === 8, 'Current Progress Stage 8', `Current progress stage is ${summary.currentProgressStage}.`);
-  assert(summary.nextPendingStage === 9, 'Next Pending Stage 9', `Next pending stage is ${summary.nextPendingStage}.`);
-  assert(summary.completedCount === 8, 'Completed Count 8', `Completed count is ${summary.completedCount} / 10.`);
+  assert(summary.currentProgressStage === 9, 'Current Progress Stage 9', `Current progress stage is ${summary.currentProgressStage}.`);
+  assert(summary.nextPendingStage === 10, 'Next Pending Stage 10', `Next pending stage is ${summary.nextPendingStage}.`);
+  assert(summary.completedCount === 9, 'Completed Count 9', `Completed count is ${summary.completedCount} / 10.`);
 
   // --------------------------------------------------------------------------
   // TEST 3: Idempotent Initialization (Zero Duplicate Rows)
@@ -112,7 +110,7 @@ async function runStageTrackerValidation() {
   assert(dbRows.rows.length === 10, 'DB Seeded Count', `Database contains ${dbRows.rows.length} stage records.`);
 
   for (const r of dbRows.rows) {
-    if (r.stage_number <= 8) {
+    if (r.stage_number <= 9) {
       assert(r.status === 'COMPLETE', `DB Stage ${r.stage_number} COMPLETE`, `DB Stage ${r.stage_number} status is COMPLETE.`);
     } else {
       assert(r.status === 'NOT_STARTED', `DB Stage ${r.stage_number} NOT_STARTED`, `DB Stage ${r.stage_number} status is NOT_STARTED.`);
@@ -160,14 +158,14 @@ async function runStageTrackerValidation() {
   );
 
   // --------------------------------------------------------------------------
-  // TEST 8: Stage 9 Remains NOT_STARTED (Strict Stage Boundary Enforcement)
+  // TEST 8: Stage 10 Remains NOT_STARTED (Strict Stage Boundary Enforcement)
   // --------------------------------------------------------------------------
-  console.log('\n[8/8] Testing: Stage 9 remains strictly NOT_STARTED...');
-  const stage9 = (await db.query<{ status: string }>(
-    `SELECT status FROM project_stage_status WHERE stage_number = 9;`
+  console.log('\n[8/8] Testing: Stage 10 remains strictly NOT_STARTED...');
+  const stage10Row = (await db.query<{ status: string }>(
+    `SELECT status FROM project_stage_status WHERE stage_number = 10;`
   )).rows[0];
 
-  assert(stage9.status === 'NOT_STARTED', 'Stage 9 Status Strictly NOT_STARTED', 'Stage 9 is NOT_STARTED.');
+  assert(stage10Row.status === 'NOT_STARTED', 'Stage 10 Status Strictly NOT_STARTED', 'Stage 10 is NOT_STARTED.');
 
   console.log('\n===============================================================');
   console.log('STAGE STATUS TRACKER VALIDATION COMPLETED: 8/8 TESTS PASSED.');

@@ -17,8 +17,9 @@
     "test:stage6": "tsx scripts/validate-stage6.ts",
     "test:stage7": "tsx scripts/validate-stage7.ts",
     "test:stage8": "tsx scripts/validate-stage8.ts",
+    "test:stage9": "tsx scripts/validate-stage9.ts",
     "test:tracker": "tsx scripts/validate-stage-tracker.ts",
-    "test": "tsx scripts/validate-schema.ts && tsx scripts/validate-stage2.ts && tsx scripts/validate-stage3.ts && tsx scripts/validate-stage4.ts && tsx scripts/validate-stage5.ts && tsx scripts/validate-stage6.ts && tsx scripts/validate-stage7.ts && tsx scripts/validate-stage8.ts && tsx scripts/validate-stage-tracker.ts"
+    "test": "tsx scripts/validate-schema.ts && tsx scripts/validate-stage2.ts && tsx scripts/validate-stage3.ts && tsx scripts/validate-stage4.ts && tsx scripts/validate-stage5.ts && tsx scripts/validate-stage6.ts && tsx scripts/validate-stage7.ts && tsx scripts/validate-stage8.ts && tsx scripts/validate-stage9.ts && tsx scripts/validate-stage-tracker.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",

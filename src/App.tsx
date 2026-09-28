@@ -88,14 +88,21 @@ export default function App() {
               <span className="text-emerald-400 font-bold mt-0.5">✓</span>
               <span>
                 <strong>Stage 8:</strong> Adjudication & contradiction blocking (<code className="text-slate-200">adjudicateContradiction</code>),
-                atomic authorization blocking, zero evidence fabrication, monotonic <code className="text-slate-200">executed_fact</code> (26/26 tests)
+                atomic authorization blocking, zero evidence fabrication, monotonic <code className="text-slate-200">executed_fact</code> (27/27 tests)
+              </span>
+            </li>
+            <li className="flex items-start space-x-2">
+              <span className="text-emerald-400 font-bold mt-0.5">✓</span>
+              <span>
+                <strong>Stage 9:</strong> Property Tests, Fault Injection, Reference Model & Concurrency Validation (
+                <code className="text-slate-200">ControlPlaneReferenceModel</code>), 250+ operations across 10 seeds, crash windows & deadlock freedom
               </span>
             </li>
           </ul>
 
           <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-500">
-            <span>Next Boundary: Stage 9 (Property Tests & Fault Injection) — Status: NOT_STARTED</span>
-            <span className="text-emerald-400">All Stage 1–8 Invariants Active</span>
+            <span>Next Boundary: Stage 10 (Final Hardening & Integration Audit) — Status: NOT_STARTED</span>
+            <span className="text-emerald-400">All Stage 1–9 Invariants Active</span>
           </div>
         </div>
       </div>

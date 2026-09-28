@@ -74,9 +74,9 @@ export const CANONICAL_INITIAL_STAGES: ReadonlyArray<Omit<StageRecord, 'updated_
   {
     stage_number: 9,
     stage_name: 'Property Tests & Fault Injection',
-    status: 'NOT_STARTED',
-    completed_at: null,
-    notes: 'Planned stage. Preserved as NOT_STARTED.',
+    status: 'COMPLETE',
+    completed_at: '2026-09-28T02:13:00.000Z',
+    notes: 'Independent reference model, 250+ randomized property operations across 10 seeds, crash-window fault injection, deadlock-free concurrency races A–I.',
   },
   {
     stage_number: 10,
